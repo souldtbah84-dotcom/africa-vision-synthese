@@ -2,17 +2,8 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Africa Vision — Synthèse des Activités</title>
-
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#152238">
-<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="AV Synthèse">
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
@@ -151,8 +142,6 @@
 
   .kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px;}
   @media(max-width:640px){.kpi-row{grid-template-columns:repeat(2,1fr);}}
-  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
-  @media(max-width:760px){.two-col{grid-template-columns:1fr;}}
   .kpi{background:var(--navy);color:#fff;border-radius:10px;padding:14px;text-align:center;}
   .kpi .num{font-family:'Space Grotesk',sans-serif;font-size:1.5rem;font-weight:700;color:var(--gold);}
   .kpi .lbl{font-size:.7rem;text-transform:uppercase;letter-spacing:.4px;opacity:.85;margin-top:2px;}
@@ -198,7 +187,7 @@ const FIRESTORE_BASE = `https://firestore.googleapis.com/v1/projects/${FIREBASE_
 const COL_CONFIG = "rapports_config";
 const COL_REPORTS = "rapports_reports";
 const COL_DGA_EXPENSES = "rapports_depenses_dga";
-const COL_DGA_MONTANTS = "rapports_montants_dga";
+const COL_DOCUMENTS = "rapports_documents";
 
 let lastSynthesisText = '';
 
@@ -207,7 +196,8 @@ let state = {
   users: null,
   reports: [],
   dgaExpenses: [],
-  dgaMontants: [],
+  documents: [],
+  filterDocType: 'all',
   dgaSignature: null,
   chefSignature: null,
   allChefSignatures: {},
@@ -352,27 +342,53 @@ async function saveDgaExpense(expense){
   });
 }
 
-async function loadDgaMontants(){
+async function loadDocuments(){
   try{
-    const res = await fetch(`${FIRESTORE_BASE}/${COL_DGA_MONTANTS}?pageSize=300`);
+    const res = await fetch(`${FIRESTORE_BASE}/${COL_DOCUMENTS}?pageSize=300`);
     const data = await res.json();
     const docs = data.documents || [];
-    state.dgaMontants = docs.map(d=>{
+    state.documents = docs.map(d=>{
       const obj = fromFirestoreDoc(d);
       const parts = d.name.split('/');
       obj.id = parts[parts.length-1];
       return obj;
     });
   }catch(e){
-    state.dgaMontants = [];
+    state.documents = [];
   }
 }
 
-async function saveDgaMontant(montant){
-  await fetch(`${FIRESTORE_BASE}/${COL_DGA_MONTANTS}/${montant.id}`, {
+async function saveDocument(doc){
+  await fetch(`${FIRESTORE_BASE}/${COL_DOCUMENTS}/${doc.id}`, {
     method:'PATCH',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(toFirestoreDoc(montant))
+    body: JSON.stringify(toFirestoreDoc(doc))
+  });
+}
+
+function compressImageFile(file, maxWidth, quality){
+  maxWidth = maxWidth || 1000;
+  quality = quality || 0.6;
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      const img = new Image();
+      img.onload = ()=>{
+        let w = img.width, h = img.height;
+        if(w > maxWidth){ h = Math.round(h * maxWidth / w); w = maxWidth; }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0,0,w,h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = ()=>reject(new Error('image invalide'));
+      img.src = e.target.result;
+    };
+    reader.onerror = ()=>reject(new Error('lecture impossible'));
+    reader.readAsDataURL(file);
   });
 }
 
@@ -428,13 +444,13 @@ async function resetAllData(){
   for(const e of state.dgaExpenses){
     try{ await fetch(`${FIRESTORE_BASE}/${COL_DGA_EXPENSES}/${e.id}`, { method:'DELETE' }); }catch(err){}
   }
-  // Supprime tous les montants reçus DGA
-  for(const m of state.dgaMontants){
-    try{ await fetch(`${FIRESTORE_BASE}/${COL_DGA_MONTANTS}/${m.id}`, { method:'DELETE' }); }catch(err){}
+  // Supprime tous les justificatifs
+  for(const d of state.documents){
+    try{ await fetch(`${FIRESTORE_BASE}/${COL_DOCUMENTS}/${d.id}`, { method:'DELETE' }); }catch(err){}
   }
   state.reports = [];
   state.dgaExpenses = [];
-  state.dgaMontants = [];
+  state.documents = [];
 }
 async function saveUsers(){
   await fetch(`${FIRESTORE_BASE}/${COL_CONFIG}/users`, {
@@ -610,7 +626,73 @@ function renderChef(){
       }
     </div>
 
+    ${renderDocumentsCardChef(svc)}
     ${renderChefSignatureCard()}
+  </div>`;
+}
+
+function renderDocumentsCardChef(svc){
+  const mine = state.documents.filter(d=>d.service===svc).sort((a,b)=>b.date.localeCompare(a.date));
+  return renderDocumentUploadForm() + renderDocumentsList(mine, false, "Mes justificatifs");
+}
+
+function renderDocumentUploadForm(){
+  return `
+  <div class="card">
+    <h2>Justificatifs (factures / reçus)</h2>
+    <p class="hint">Prenez en photo les factures et reçus liés à vos dépenses ou encaissements.</p>
+    <form id="docForm">
+      <label>Photo du document</label>
+      <input type="file" id="doc_photo" accept="image/*" capture="environment" required>
+      <div id="docPreviewWrap" style="display:none;margin-top:10px;">
+        <img id="docPreview" style="max-width:180px;border-radius:8px;border:1.5px solid var(--line);">
+      </div>
+
+      <div class="grid2">
+        <div>
+          <label>Type de document</label>
+          <select id="doc_type">
+            <option value="facture">Facture payée (dépense)</option>
+            <option value="recu">Reçu client (encaissement)</option>
+          </select>
+        </div>
+        <div>
+          <label>Montant (GNF)</label>
+          <input type="number" id="doc_montant" min="0" placeholder="0" required>
+        </div>
+      </div>
+
+      <label>Description</label>
+      <input type="text" id="doc_description" placeholder="Ex: Facture carburant, reçu client Fatoumata..." required>
+
+      <label>Date du document</label>
+      <input type="date" id="doc_date" value="${todayISO()}">
+
+      <button type="submit" class="btn btn-primary">📎 Enregistrer le justificatif</button>
+    </form>
+  </div>`;
+}
+
+function renderDocumentsList(list, showServiceTag, title){
+  return `
+  <div class="card">
+    <h2>${title} (${list.length})</h2>
+    ${list.length===0 ? '<p class="empty">Aucun justificatif enregistré.</p>' :
+      list.map(d=>`
+        <div class="report-item" style="display:flex;gap:12px;align-items:flex-start;">
+          <img src="${d.image}" data-doc-id="${d.id}" class="doc-thumb" style="width:60px;height:60px;object-fit:cover;border-radius:6px;border:1px solid var(--line);cursor:pointer;flex-shrink:0;">
+          <div style="flex:1;">
+            <div class="report-top" style="margin-bottom:2px;">
+              <span class="report-date">${fmtDate(d.date)}</span>
+              <span class="chip" style="font-weight:700;">${d.type==='recu'?'💵 Reçu':'🧾 Facture'}</span>
+            </div>
+            ${showServiceTag ? `<span class="service-tag ${getServiceInfo(d.service).tag}" style="margin-bottom:4px;display:inline-block;">${getServiceInfo(d.service).label}</span>` : ''}
+            <div class="report-body" style="margin-bottom:4px;">${escapeHtml(d.description)}</div>
+            <span class="chip">${Number(d.montant||0).toLocaleString('fr-FR')} GNF</span>
+          </div>
+        </div>
+      `).join('')
+    }
   </div>`;
 }
 
@@ -644,6 +726,7 @@ function attachChefEvents(){
     showToast("Actualisation...");
     await loadReports();
     await loadChefSignature(state.session.service);
+    await loadDocuments();
     render();
     showToast("Données à jour ✓");
   };
@@ -681,6 +764,89 @@ function attachChefEvents(){
   if(redoSigBtn) redoSigBtn.onclick = ()=>{ state.chefSignature = null; render(); };
 
   setupChefSignaturePad();
+  setupDocumentForm(state.session.service);
+  setupDocThumbClicks();
+}
+
+function setupDocumentForm(serviceKey){
+  const photoInput = document.getElementById('doc_photo');
+  const docForm = document.getElementById('docForm');
+  if(!photoInput || !docForm) return;
+
+  let compressedImage = null;
+
+  photoInput.onchange = async ()=>{
+    const file = photoInput.files[0];
+    if(!file) return;
+    try{
+      compressedImage = await compressImageFile(file);
+      const wrap = document.getElementById('docPreviewWrap');
+      const img = document.getElementById('docPreview');
+      img.src = compressedImage;
+      wrap.style.display = 'block';
+    }catch(e){
+      showToast("⚠ Impossible de lire cette image.");
+    }
+  };
+
+  docForm.onsubmit = async (e)=>{
+    e.preventDefault();
+    if(!compressedImage){ showToast("⚠ Ajoutez d'abord une photo du document."); return; }
+    const type = document.getElementById('doc_type').value;
+    const montant = document.getElementById('doc_montant').value || 0;
+    const description = document.getElementById('doc_description').value.trim();
+    const date = document.getElementById('doc_date').value || todayISO();
+    if(Number(montant)<=0 || !description){ showToast("⚠ Renseignez le montant et la description."); return; }
+
+    const doc = {
+      id: uid(),
+      service: serviceKey,
+      chef: state.session.name,
+      type, montant: Number(montant), description, date,
+      image: compressedImage,
+      createdAt: Date.now()
+    };
+    state.documents.push(doc);
+    const btn = docForm.querySelector('button[type=submit]');
+    if(btn){ btn.disabled = true; btn.textContent = "Enregistrement..."; }
+    try{
+      await saveDocument(doc);
+      showToast("Justificatif enregistré ✓");
+    }catch(err){
+      showToast("⚠ Échec de l'enregistrement — vérifiez votre connexion internet.");
+    }
+    render();
+  };
+}
+
+function setupDocThumbClicks(){
+  document.querySelectorAll('.doc-thumb').forEach(el=>{
+    el.onclick = ()=>{
+      const doc = state.documents.find(d=>d.id === el.dataset.docId);
+      if(doc) showDocumentModal(doc);
+    };
+  });
+}
+
+function showDocumentModal(doc){
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;';
+  box.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:16px;max-width:480px;width:100%;max-height:90vh;overflow:auto;">
+      <img src="${doc.image}" style="width:100%;border-radius:8px;display:block;margin-bottom:12px;">
+      <div style="font-size:.85rem;color:#585148;">
+        <div><strong>${doc.type==='recu'?'💵 Reçu client':'🧾 Facture payée'}</strong></div>
+        <div>${escapeHtml(doc.description)}</div>
+        <div>Montant : <strong>${Number(doc.montant||0).toLocaleString('fr-FR')} GNF</strong></div>
+        <div>Date : ${fmtDate(doc.date)}</div>
+        <div>Service : ${getServiceInfo(doc.service).label}</div>
+        <div>Ajouté par : ${escapeHtml(doc.chef||'')}</div>
+      </div>
+      <button class="btn btn-primary" style="width:100%;margin-top:12px;" id="closeDocModal">Fermer</button>
+    </div>`;
+  document.body.appendChild(box);
+  box.querySelector('#closeDocModal').onclick = ()=> document.body.removeChild(box);
+  box.onclick = (e)=>{ if(e.target===box) document.body.removeChild(box); };
 }
 
 function setupChefSignaturePad(){
@@ -737,6 +903,7 @@ function setupChefSignaturePad(){
 
 /* ================= DGA VIEW ================= */
 function getServiceInfo(key){
+  if(key==='dga') return { label:"Direction (Général)", tag:"tag-cargo-reception" };
   return SERVICES[key] || { label: key || "Service inconnu", tag:"" };
 }
 
@@ -758,12 +925,58 @@ function filteredDgaExpenses(){
   }).sort((a,b)=> b.date.localeCompare(a.date));
 }
 
-function filteredDgaMontants(){
-  return state.dgaMontants.filter(m=>{
-    if(state.filterFrom && m.date < state.filterFrom) return false;
-    if(state.filterTo && m.date > state.filterTo) return false;
+function filteredDocuments(){
+  return state.documents.filter(d=>{
+    if(state.filterService!=='all' && d.service!==state.filterService) return false;
+    if(state.filterDocType!=='all' && d.type!==state.filterDocType) return false;
+    if(state.filterFrom && d.date < state.filterFrom) return false;
+    if(state.filterTo && d.date > state.filterTo) return false;
     return true;
   }).sort((a,b)=> b.date.localeCompare(a.date));
+}
+
+function renderDocumentsTab(isPatron){
+  const list = filteredDocuments();
+  const totalFactures = list.filter(d=>d.type==='facture').reduce((s,d)=>s+Number(d.montant||0),0);
+  const totalRecus = list.filter(d=>d.type==='recu').reduce((s,d)=>s+Number(d.montant||0),0);
+  return `
+  <div class="card no-print">
+    <h2>Filtrer</h2>
+    <div class="grid2">
+      <div>
+        <label>Service</label>
+        <select id="filtServiceDoc">
+          <option value="all">Tous les services</option>
+          ${Object.keys(SERVICES).map(k=>`<option value="${k}" ${state.filterService===k?'selected':''}>${SERVICES[k].label}</option>`).join('')}
+          <option value="dga" ${state.filterService==='dga'?'selected':''}>Direction (Général)</option>
+        </select>
+      </div>
+      <div>
+        <label>Type de document</label>
+        <select id="filtDocType">
+          <option value="all" ${state.filterDocType==='all'?'selected':''}>Tous</option>
+          <option value="facture" ${state.filterDocType==='facture'?'selected':''}>Factures payées</option>
+          <option value="recu" ${state.filterDocType==='recu'?'selected':''}>Reçus clients</option>
+        </select>
+      </div>
+      <div>
+        <label>Du</label>
+        <input type="date" id="filtFromDoc" value="${state.filterFrom||''}">
+      </div>
+      <div>
+        <label>Au</label>
+        <input type="date" id="filtToDoc" value="${state.filterTo||''}">
+      </div>
+    </div>
+  </div>
+
+  <div class="kpi-row" style="grid-template-columns:repeat(2,1fr);">
+    <div class="kpi"><div class="num">${totalFactures.toLocaleString('fr-FR')}</div><div class="lbl">Factures payées (GNF)</div></div>
+    <div class="kpi" style="background:var(--teal);"><div class="num" style="color:#fff;">${totalRecus.toLocaleString('fr-FR')}</div><div class="lbl">Reçus clients (GNF)</div></div>
+  </div>
+
+  ${isPatron ? '' : renderDocumentUploadForm()}
+  ${renderDocumentsList(list, true, "Tous les justificatifs")}`;
 }
 
 function renderDga(){
@@ -771,12 +984,9 @@ function renderDga(){
   if(isPatron && state.dgaTab==='depenses') state.dgaTab = 'overview';
   const list = filteredReports();
   const dgaExp = filteredDgaExpenses();
-  const dgaMont = filteredDgaMontants();
   const totalCA = list.reduce((s,r)=>s+Number(r.ca||0),0);
   const totalDepensesServices = list.reduce((s,r)=>s+Number(r.depenses||0),0);
   const totalDepensesDga = dgaExp.reduce((s,e)=>s+Number(e.montant||0),0);
-  const totalMontantsRecus = dgaMont.reduce((s,m)=>s+Number(m.montant||0),0);
-  const soldeDga = totalMontantsRecus - totalDepensesDga;
   const totalDepenses = totalDepensesServices + totalDepensesDga;
   const totalNet = totalCA - totalDepenses;
   const totalClients = list.reduce((s,r)=>s+Number(r.clients||0),0);
@@ -799,17 +1009,19 @@ function renderDga(){
       <div class="tab ${state.dgaTab==='overview'?'active':''}" data-tab="overview">Vue d'ensemble</div>
       <div class="tab ${state.dgaTab==='reports'?'active':''}" data-tab="reports">Rapports</div>
       ${isPatron ? '' : `<div class="tab ${state.dgaTab==='depenses'?'active':''}" data-tab="depenses">Mes dépenses</div>`}
+      <div class="tab ${state.dgaTab==='documents'?'active':''}" data-tab="documents">Justificatifs</div>
       <div class="tab ${state.dgaTab==='synthese'?'active':''}" data-tab="synthese">Synthèse pour le Patron</div>
     </div>
 
-    ${state.dgaTab==='overview' ? renderOverview(missingToday, list, totalDepensesDga, isPatron, totalMontantsRecus, soldeDga) : ''}
+    ${state.dgaTab==='overview' ? renderOverview(missingToday, list, totalDepensesDga, isPatron) : ''}
     ${state.dgaTab==='reports' ? renderReportsTab(list) : ''}
-    ${state.dgaTab==='depenses' && !isPatron ? renderDgaExpensesTab(dgaExp, dgaMont, totalMontantsRecus, totalDepensesDga, soldeDga) : ''}
-    ${state.dgaTab==='synthese' ? renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDepensesDga, totalDepenses, totalNet, totalClients, problemesCount, isPatron, totalMontantsRecus, soldeDga, dgaMont) : ''}
+    ${state.dgaTab==='depenses' && !isPatron ? renderDgaExpensesTab(dgaExp) : ''}
+    ${state.dgaTab==='documents' ? renderDocumentsTab(isPatron) : ''}
+    ${state.dgaTab==='synthese' ? renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDepensesDga, totalDepenses, totalNet, totalClients, problemesCount, isPatron) : ''}
   </div>`;
 }
 
-function renderOverview(missingToday, list, totalDepensesDga, isPatron, totalMontantsRecus, soldeDga){
+function renderOverview(missingToday, list, totalDepensesDga, isPatron){
   const totalCA = list.reduce((s,r)=>s+Number(r.ca||0),0);
   const totalDepensesServices = list.reduce((s,r)=>s+Number(r.depenses||0),0);
   const totalDepenses = totalDepensesServices + totalDepensesDga;
@@ -823,10 +1035,6 @@ function renderOverview(missingToday, list, totalDepensesDga, isPatron, totalMon
     <div class="kpi"><div class="num">${totalClients}</div><div class="lbl">Clients servis</div></div>
     <div class="kpi"><div class="num">${list.length}</div><div class="lbl">Rapports (période)</div></div>
     <div class="kpi"><div class="num">${missingToday.length}</div><div class="lbl">Services en attente</div></div>
-    ${!isPatron ? `
-    <div class="kpi"><div class="num">${(totalMontantsRecus||0).toLocaleString('fr-FR')}</div><div class="lbl">Montant reçu — DGA (GNF)</div></div>
-    <div class="kpi" style="background:${soldeDga<0?'#b5473a':'var(--teal)'};"><div class="num" style="color:#fff;">${(soldeDga||0).toLocaleString('fr-FR')}</div><div class="lbl">Solde restant — DGA (GNF)</div></div>
-    ` : ''}
   </div>
 
   <div class="card">
@@ -860,7 +1068,7 @@ function renderOverview(missingToday, list, totalDepensesDga, isPatron, totalMon
   ${isPatron ? '' : `
   <div class="card" style="border-color:var(--danger);">
     <h2 style="color:var(--danger);">Zone sensible</h2>
-    <p class="hint">Efface tous les rapports et dépenses enregistrés pour repartir de zéro. Les comptes, mots de passe et signature ne sont pas touchés. Cette action est irréversible.</p>
+    <p class="hint">Efface tous les rapports, dépenses et justificatifs enregistrés pour repartir de zéro. Les comptes, mots de passe et signature ne sont pas touchés. Cette action est irréversible.</p>
     <button class="btn btn-secondary" id="resetAllBtn" type="button" style="border-color:var(--danger);color:var(--danger);">🗑️ Réinitialiser toutes les données</button>
   </div>`}`;
 }
@@ -915,82 +1123,41 @@ function renderReportsTab(list){
   </div>`;
 }
 
-function renderDgaExpensesTab(dgaExp, dgaMont, totalMontantsRecus, totalDepensesDga, soldeDga){
-  const total = totalDepensesDga;
-  const totalRecu = totalMontantsRecus;
+function renderDgaExpensesTab(dgaExp){
+  const total = dgaExp.reduce((s,e)=>s+Number(e.montant||0),0);
   return `
-  <div class="kpi-row">
-    <div class="kpi"><div class="num">${totalRecu.toLocaleString('fr-FR')}</div><div class="lbl">Total reçu (GNF)</div></div>
-    <div class="kpi"><div class="num">${total.toLocaleString('fr-FR')}</div><div class="lbl">Total dépensé (GNF)</div></div>
-    <div class="kpi" style="background:${soldeDga<0?'#b5473a':'var(--teal)'};"><div class="num" style="color:#fff;">${soldeDga.toLocaleString('fr-FR')}</div><div class="lbl">Solde restant (GNF)</div></div>
+  <div class="card">
+    <h2>Nouvelle dépense</h2>
+    <p class="hint">Dépenses générales que vous effectuez en tant que DGA (hors services).</p>
+    <form id="dgaExpenseForm">
+      <label>Motif de la dépense</label>
+      <input type="text" id="d_motif" placeholder="Ex: Carburant véhicule direction, frais de mission..." required>
+
+      <label>Montant (GNF)</label>
+      <input type="number" id="d_montant" min="0" placeholder="0" required>
+
+      <button type="submit" class="btn btn-primary">Enregistrer la dépense</button>
+    </form>
   </div>
 
-  <div class="two-col">
-    <div class="card">
-      <h2>Montant reçu</h2>
-      <p class="hint">Sommes que vous recevez en tant que DGA (avances, caisse...). Vos dépenses seront automatiquement déduites de ce montant.</p>
-      <form id="dgaMontantForm">
-        <label>Motif / provenance</label>
-        <input type="text" id="m_motif" placeholder="Ex: Avance caisse, remise du DG..." required>
-
-        <label>Montant (GNF)</label>
-        <input type="number" id="m_montant" min="0" placeholder="0" required>
-
-        <button type="submit" class="btn btn-primary">Enregistrer le montant reçu</button>
-      </form>
-    </div>
-
-    <div class="card">
-      <h2>Nouvelle dépense</h2>
-      <p class="hint">Dépenses générales que vous effectuez en tant que DGA (hors services).</p>
-      <form id="dgaExpenseForm">
-        <label>Motif de la dépense</label>
-        <input type="text" id="d_motif" placeholder="Ex: Carburant véhicule direction, frais de mission..." required>
-
-        <label>Montant (GNF)</label>
-        <input type="number" id="d_montant" min="0" placeholder="0" required>
-
-        <button type="submit" class="btn btn-primary">Enregistrer la dépense</button>
-      </form>
-    </div>
-  </div>
-
-  <div class="two-col">
-    <div class="card">
-      <h2>Historique des montants reçus (${dgaMont.length})</h2>
-      <p class="hint">Total sur la période : <strong>${totalRecu.toLocaleString('fr-FR')} GNF</strong></p>
-      ${dgaMont.length===0 ? '<p class="empty">Aucun montant reçu enregistré pour cette période.</p>' :
-        dgaMont.map(m=>`
-          <div class="report-item">
-            <div class="report-top">
-              <span class="report-date">${fmtDate(m.date)}</span>
-              <span class="chip" style="font-weight:700;">${Number(m.montant||0).toLocaleString('fr-FR')} GNF</span>
-            </div>
-            <div class="report-body">${escapeHtml(m.motif)}</div>
+  <div class="card">
+    <h2>Historique de mes dépenses (${dgaExp.length})</h2>
+    <p class="hint">Total sur la période : <strong>${total.toLocaleString('fr-FR')} GNF</strong></p>
+    ${dgaExp.length===0 ? '<p class="empty">Aucune dépense enregistrée pour cette période.</p>' :
+      dgaExp.map(e=>`
+        <div class="report-item">
+          <div class="report-top">
+            <span class="report-date">${fmtDate(e.date)}</span>
+            <span class="chip" style="font-weight:700;">${Number(e.montant||0).toLocaleString('fr-FR')} GNF</span>
           </div>
-        `).join('')
-      }
-    </div>
-
-    <div class="card">
-      <h2>Historique de mes dépenses (${dgaExp.length})</h2>
-      <p class="hint">Total sur la période : <strong>${total.toLocaleString('fr-FR')} GNF</strong></p>
-      ${dgaExp.length===0 ? '<p class="empty">Aucune dépense enregistrée pour cette période.</p>' :
-        dgaExp.map(e=>`
-          <div class="report-item">
-            <div class="report-top">
-              <span class="report-date">${fmtDate(e.date)}</span>
-              <span class="chip" style="font-weight:700;">${Number(e.montant||0).toLocaleString('fr-FR')} GNF</span>
-            </div>
-            <div class="report-body">${escapeHtml(e.motif)}</div>
-          </div>
-        `).join('')
-      }
-    </div>
+          <div class="report-body">${escapeHtml(e.motif)}</div>
+        </div>
+      `).join('')
+    }
   </div>`;
 }
 
-function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDepensesDga, totalDepenses, totalNet, totalClients, problemesCount, isPatron, totalMontantsRecus, soldeDga, dgaMont){
+function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDepensesDga, totalDepenses, totalNet, totalClients, problemesCount, isPatron){
   const from = state.filterFrom || (list.length?list[list.length-1].date:todayISO());
   const to = state.filterTo || todayISO();
 
@@ -1007,8 +1174,6 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
   text += `DÉPENSES GÉNÉRALES (DGA) : ${totalDepensesDga.toLocaleString('fr-FR')} GNF\n`;
   text += `DÉPENSES TOTALES : ${totalDepenses.toLocaleString('fr-FR')} GNF\n`;
   text += `CHIFFRE D'AFFAIRES NET : ${totalNet.toLocaleString('fr-FR')} GNF\n`;
-  text += `MONTANT REÇU PAR LE DGA : ${(totalMontantsRecus||0).toLocaleString('fr-FR')} GNF\n`;
-  text += `SOLDE RESTANT (DGA) : ${(soldeDga||0).toLocaleString('fr-FR')} GNF\n`;
   text += `CLIENTS SERVIS AU TOTAL : ${totalClients}\n`;
   text += `NOMBRE DE RAPPORTS REÇUS : ${list.length}\n`;
   text += `POINTS D'ATTENTION SIGNALÉS : ${problemesCount}\n\n`;
@@ -1036,17 +1201,6 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
   });
 
   text += `— — — — — — — — — — — — —\n`;
-  text += `MONTANT REÇU PAR LE DGA\n`;
-  if(!dgaMont || dgaMont.length===0){
-    text += `Aucun montant reçu sur la période.\n\n`;
-  } else {
-    dgaMont.slice().sort((a,b)=>a.date.localeCompare(b.date)).forEach(m=>{
-      text += `• ${fmtDate(m.date)} : ${m.motif} — ${Number(m.montant||0).toLocaleString('fr-FR')} GNF\n`;
-    });
-    text += `\n`;
-  }
-
-  text += `— — — — — — — — — — — — —\n`;
   text += `DÉPENSES GÉNÉRALES (DGA)\n`;
   if(dgaExp.length===0){
     text += `Aucune dépense générale sur la période.\n\n`;
@@ -1056,7 +1210,6 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
     });
     text += `\n`;
   }
-  text += `SOLDE RESTANT (DGA) : ${(soldeDga||0).toLocaleString('fr-FR')} GNF\n\n`;
 
   text += `— — — — — — — — — — — — —\n`;
   text += `Signé par : ${state.session.name} (DGA)\n`;
@@ -1072,7 +1225,6 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
       <div>Dépenses générales (DGA) : ${totalDepensesDga.toLocaleString('fr-FR')} GNF</div>
       <div style="font-weight:700;">Dépenses totales : ${totalDepenses.toLocaleString('fr-FR')} GNF</div>
       <div style="font-weight:700;color:var(--teal);">CHIFFRE D'AFFAIRES NET : ${totalNet.toLocaleString('fr-FR')} GNF</div>
-      <div>Montant reçu (DGA) : ${(totalMontantsRecus||0).toLocaleString('fr-FR')} GNF · Solde restant (DGA) : <strong>${(soldeDga||0).toLocaleString('fr-FR')} GNF</strong></div>
       <div>Clients servis au total : ${totalClients} · Rapports reçus : ${list.length} · Points d'attention : ${problemesCount}</div>
     </div>`;
 
@@ -1108,32 +1260,6 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
     }
     previewHtml += `</div></div>`;
   });
-
-  previewHtml += `<div style="border-top:2px solid var(--line);padding:14px 0;">`;
-  previewHtml += `<div class="service-tag" style="margin-bottom:6px;background:var(--navy);color:#fff;">CAISSE DU DGA</div>`;
-  previewHtml += `<div style="font-size:.85rem;color:#585148;margin-bottom:8px;">Montant reçu : <strong>${(totalMontantsRecus||0).toLocaleString('fr-FR')} GNF</strong> | Dépensé : <strong>${(totalDepensesDga||0).toLocaleString('fr-FR')} GNF</strong> | Solde : <strong style="color:${soldeDga<0?'#b5473a':'inherit'};">${(soldeDga||0).toLocaleString('fr-FR')} GNF</strong></div>`;
-
-  const dgaMontSorted = (dgaMont||[]).slice().sort((a,b)=>a.date.localeCompare(b.date));
-  const dgaExpSorted = dgaExp.slice().sort((a,b)=>a.date.localeCompare(b.date));
-
-  previewHtml += `<div style="font-size:.8rem;font-weight:700;color:var(--navy);margin:8px 0 4px;">Montants reçus</div>`;
-  if(dgaMontSorted.length===0){
-    previewHtml += `<p class="empty" style="margin:4px 0 8px;">Aucun montant reçu sur la période.</p>`;
-  } else {
-    dgaMontSorted.forEach(m=>{
-      previewHtml += `<div style="font-size:.85rem;margin-bottom:4px;">• ${fmtDate(m.date)} : ${escapeHtml(m.motif)} — <strong>${Number(m.montant||0).toLocaleString('fr-FR')} GNF</strong></div>`;
-    });
-  }
-
-  previewHtml += `<div style="font-size:.8rem;font-weight:700;color:var(--navy);margin:10px 0 4px;">Dépenses</div>`;
-  if(dgaExpSorted.length===0){
-    previewHtml += `<p class="empty" style="margin:4px 0 0;">Aucune dépense générale sur la période.</p>`;
-  } else {
-    dgaExpSorted.forEach(e=>{
-      previewHtml += `<div style="font-size:.85rem;margin-bottom:4px;">• ${fmtDate(e.date)} : ${escapeHtml(e.motif)} — <strong>${Number(e.montant||0).toLocaleString('fr-FR')} GNF</strong></div>`;
-    });
-  }
-  previewHtml += `</div>`;
 
   return `
   <div class="card no-print">
@@ -1195,9 +1321,9 @@ function attachDgaEvents(){
     showToast("Actualisation...");
     await loadReports();
     await loadDgaExpenses();
-    await loadDgaMontants();
     await loadDgaSignature();
     await loadAllChefSignatures();
+    await loadDocuments();
     render();
     showToast("Données à jour ✓");
   };
@@ -1228,25 +1354,6 @@ function attachDgaEvents(){
   if(ff) ff.onchange = ()=>{ state.filterFrom = ff.value || null; render(); };
   if(ft) ft.onchange = ()=>{ state.filterTo = ft.value || null; render(); };
 
-  const dgaMontantForm = document.getElementById('dgaMontantForm');
-  if(dgaMontantForm) dgaMontantForm.onsubmit = async (e)=>{
-    e.preventDefault();
-    const motif = document.getElementById('m_motif').value.trim();
-    const montant = document.getElementById('m_montant').value || 0;
-    if(!motif || Number(montant)<=0){ showToast("⚠ Indiquez un motif et un montant."); return; }
-    const recu = { id: uid(), motif, montant: Number(montant), date: todayISO(), createdAt: Date.now() };
-    state.dgaMontants.push(recu);
-    const btn = dgaMontantForm.querySelector('button[type=submit]');
-    if(btn){ btn.disabled = true; btn.textContent = "Enregistrement..."; }
-    try{
-      await saveDgaMontant(recu);
-      showToast("Montant reçu enregistré ✓");
-    }catch(err){
-      showToast("⚠ Échec de l'enregistrement — vérifiez votre connexion internet.");
-    }
-    render();
-  };
-
   const dgaForm = document.getElementById('dgaExpenseForm');
   if(dgaForm) dgaForm.onsubmit = async (e)=>{
     e.preventDefault();
@@ -1276,7 +1383,18 @@ function attachDgaEvents(){
   const redoSigBtn = document.getElementById('redoSigBtn');
   if(redoSigBtn) redoSigBtn.onclick = ()=>{ state.dgaSignature = null; render(); };
 
+  const fsd = document.getElementById('filtServiceDoc');
+  const fdt = document.getElementById('filtDocType');
+  const ffd = document.getElementById('filtFromDoc');
+  const ftd = document.getElementById('filtToDoc');
+  if(fsd) fsd.onchange = ()=>{ state.filterService = fsd.value; render(); };
+  if(fdt) fdt.onchange = ()=>{ state.filterDocType = fdt.value; render(); };
+  if(ffd) ffd.onchange = ()=>{ state.filterFrom = ffd.value || null; render(); };
+  if(ftd) ftd.onchange = ()=>{ state.filterTo = ftd.value || null; render(); };
+
   setupSignaturePad();
+  setupDocumentForm('dga');
+  setupDocThumbClicks();
 }
 
 function setupSignaturePad(){
@@ -1389,18 +1507,10 @@ function escapeHtml(str){
   await loadUsers();
   await loadReports();
   await loadDgaExpenses();
-  await loadDgaMontants();
   await loadDgaSignature();
+  await loadDocuments();
   render();
 })();
-
-if('serviceWorker' in navigator){
-  window.addEventListener('load', function(){
-    navigator.serviceWorker.register('sw.js').catch(function(e){
-      console.error('Échec de l\'enregistrement du Service Worker', e);
-    });
-  });
-}
 </script>
 </body>
 </html>
