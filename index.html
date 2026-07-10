@@ -984,9 +984,11 @@ function renderDga(){
   if(isPatron && state.dgaTab==='depenses') state.dgaTab = 'overview';
   const list = filteredReports();
   const dgaExp = filteredDgaExpenses();
-  const totalCA = list.reduce((s,r)=>s+Number(r.ca||0),0);
+  const totalCAServices = list.reduce((s,r)=>s+Number(r.ca||0),0);
   const totalDepensesServices = list.reduce((s,r)=>s+Number(r.depenses||0),0);
-  const totalDepensesDga = dgaExp.reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalDepensesDga = dgaExp.filter(e=>e.type!=='recu').reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalRecusDga = dgaExp.filter(e=>e.type==='recu').reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalCA = totalCAServices + totalRecusDga;
   const totalDepenses = totalDepensesServices + totalDepensesDga;
   const totalNet = totalCA - totalDepenses;
   const totalClients = list.reduce((s,r)=>s+Number(r.clients||0),0);
@@ -1008,21 +1010,22 @@ function renderDga(){
     <div class="tabs no-print">
       <div class="tab ${state.dgaTab==='overview'?'active':''}" data-tab="overview">Vue d'ensemble</div>
       <div class="tab ${state.dgaTab==='reports'?'active':''}" data-tab="reports">Rapports</div>
-      ${isPatron ? '' : `<div class="tab ${state.dgaTab==='depenses'?'active':''}" data-tab="depenses">Mes dépenses</div>`}
+      ${isPatron ? '' : `<div class="tab ${state.dgaTab==='depenses'?'active':''}" data-tab="depenses">Mes opérations</div>`}
       <div class="tab ${state.dgaTab==='documents'?'active':''}" data-tab="documents">Justificatifs</div>
       <div class="tab ${state.dgaTab==='synthese'?'active':''}" data-tab="synthese">Synthèse pour le Patron</div>
     </div>
 
-    ${state.dgaTab==='overview' ? renderOverview(missingToday, list, totalDepensesDga, isPatron) : ''}
+    ${state.dgaTab==='overview' ? renderOverview(missingToday, list, totalDepensesDga, totalRecusDga, isPatron) : ''}
     ${state.dgaTab==='reports' ? renderReportsTab(list) : ''}
     ${state.dgaTab==='depenses' && !isPatron ? renderDgaExpensesTab(dgaExp) : ''}
     ${state.dgaTab==='documents' ? renderDocumentsTab(isPatron) : ''}
-    ${state.dgaTab==='synthese' ? renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDepensesDga, totalDepenses, totalNet, totalClients, problemesCount, isPatron) : ''}
+    ${state.dgaTab==='synthese' ? renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDepensesDga, totalRecusDga, totalDepenses, totalNet, totalClients, problemesCount, isPatron) : ''}
   </div>`;
 }
 
-function renderOverview(missingToday, list, totalDepensesDga, isPatron){
-  const totalCA = list.reduce((s,r)=>s+Number(r.ca||0),0);
+function renderOverview(missingToday, list, totalDepensesDga, totalRecusDga, isPatron){
+  const totalCAServices = list.reduce((s,r)=>s+Number(r.ca||0),0);
+  const totalCA = totalCAServices + totalRecusDga;
   const totalDepensesServices = list.reduce((s,r)=>s+Number(r.depenses||0),0);
   const totalDepenses = totalDepensesServices + totalDepensesDga;
   const totalNet = totalCA - totalDepenses;
@@ -1030,6 +1033,7 @@ function renderOverview(missingToday, list, totalDepensesDga, isPatron){
   return `
   <div class="kpi-row">
     <div class="kpi"><div class="num">${totalCA.toLocaleString('fr-FR')}</div><div class="lbl">CA brut (GNF)</div></div>
+    <div class="kpi"><div class="num">${totalRecusDga.toLocaleString('fr-FR')}</div><div class="lbl">Dont reçu par DGA (GNF)</div></div>
     <div class="kpi"><div class="num">${totalDepenses.toLocaleString('fr-FR')}</div><div class="lbl">Dépenses totales (GNF)</div></div>
     <div class="kpi" style="background:var(--teal);"><div class="num" style="color:#fff;">${totalNet.toLocaleString('fr-FR')}</div><div class="lbl">CA net (GNF)</div></div>
     <div class="kpi"><div class="num">${totalClients}</div><div class="lbl">Clients servis</div></div>
@@ -1124,31 +1128,38 @@ function renderReportsTab(list){
 }
 
 function renderDgaExpensesTab(dgaExp){
-  const total = dgaExp.reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalDep = dgaExp.filter(e=>e.type!=='recu').reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalRecu = dgaExp.filter(e=>e.type==='recu').reduce((s,e)=>s+Number(e.montant||0),0);
   return `
   <div class="card">
-    <h2>Nouvelle dépense</h2>
-    <p class="hint">Dépenses générales que vous effectuez en tant que DGA (hors services).</p>
+    <h2>Nouvelle opération</h2>
+    <p class="hint">Dépenses générales ou argent reçu directement d'un client, en tant que DGA (hors services).</p>
     <form id="dgaExpenseForm">
-      <label>Motif de la dépense</label>
-      <input type="text" id="d_motif" placeholder="Ex: Carburant véhicule direction, frais de mission..." required>
+      <label>Type d'opération</label>
+      <select id="d_type">
+        <option value="depense">💸 Dépense effectuée</option>
+        <option value="recu">💰 Argent reçu d'un client</option>
+      </select>
+
+      <label>Motif</label>
+      <input type="text" id="d_motif" placeholder="Ex: Carburant véhicule direction / Paiement client Fatoumata..." required>
 
       <label>Montant (GNF)</label>
       <input type="number" id="d_montant" min="0" placeholder="0" required>
 
-      <button type="submit" class="btn btn-primary">Enregistrer la dépense</button>
+      <button type="submit" class="btn btn-primary">Enregistrer l'opération</button>
     </form>
   </div>
 
   <div class="card">
-    <h2>Historique de mes dépenses (${dgaExp.length})</h2>
-    <p class="hint">Total sur la période : <strong>${total.toLocaleString('fr-FR')} GNF</strong></p>
-    ${dgaExp.length===0 ? '<p class="empty">Aucune dépense enregistrée pour cette période.</p>' :
+    <h2>Historique de mes opérations (${dgaExp.length})</h2>
+    <p class="hint">Dépenses : <strong>${totalDep.toLocaleString('fr-FR')} GNF</strong> · Argent reçu : <strong>${totalRecu.toLocaleString('fr-FR')} GNF</strong></p>
+    ${dgaExp.length===0 ? '<p class="empty">Aucune opération enregistrée pour cette période.</p>' :
       dgaExp.map(e=>`
         <div class="report-item">
           <div class="report-top">
             <span class="report-date">${fmtDate(e.date)}</span>
-            <span class="chip" style="font-weight:700;">${Number(e.montant||0).toLocaleString('fr-FR')} GNF</span>
+            <span class="chip" style="font-weight:700;">${e.type==='recu'?'💰 Reçu':'💸 Dépense'} — ${Number(e.montant||0).toLocaleString('fr-FR')} GNF</span>
           </div>
           <div class="report-body">${escapeHtml(e.motif)}</div>
         </div>
@@ -1157,7 +1168,7 @@ function renderDgaExpensesTab(dgaExp){
   </div>`;
 }
 
-function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDepensesDga, totalDepenses, totalNet, totalClients, problemesCount, isPatron){
+function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDepensesDga, totalRecusDga, totalDepenses, totalNet, totalClients, problemesCount, isPatron){
   const from = state.filterFrom || (list.length?list[list.length-1].date:todayISO());
   const to = state.filterTo || todayISO();
 
@@ -1169,7 +1180,7 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
   text += `Période : ${fmtDate(from)} au ${fmtDate(to)}\n`;
   text += `Préparé par : ${state.session.name} (DGA)\n`;
   text += `\n— — — — — — — — — — — — —\n\n`;
-  text += `CHIFFRE D'AFFAIRES BRUT : ${totalCA.toLocaleString('fr-FR')} GNF\n`;
+  text += `CHIFFRE D'AFFAIRES BRUT : ${totalCA.toLocaleString('fr-FR')} GNF (dont ${totalRecusDga.toLocaleString('fr-FR')} GNF reçus directement par le DGA)\n`;
   text += `DÉPENSES DES SERVICES : ${totalDepensesServices.toLocaleString('fr-FR')} GNF\n`;
   text += `DÉPENSES GÉNÉRALES (DGA) : ${totalDepensesDga.toLocaleString('fr-FR')} GNF\n`;
   text += `DÉPENSES TOTALES : ${totalDepenses.toLocaleString('fr-FR')} GNF\n`;
@@ -1201,12 +1212,13 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
   });
 
   text += `— — — — — — — — — — — — —\n`;
-  text += `DÉPENSES GÉNÉRALES (DGA)\n`;
+  text += `OPÉRATIONS GÉNÉRALES (DGA)\n`;
   if(dgaExp.length===0){
-    text += `Aucune dépense générale sur la période.\n\n`;
+    text += `Aucune opération générale sur la période.\n\n`;
   } else {
     dgaExp.slice().sort((a,b)=>a.date.localeCompare(b.date)).forEach(e=>{
-      text += `• ${fmtDate(e.date)} : ${e.motif} — ${Number(e.montant||0).toLocaleString('fr-FR')} GNF\n`;
+      const icone = e.type==='recu' ? '💰 Reçu' : '💸 Dépense';
+      text += `• ${fmtDate(e.date)} : [${icone}] ${e.motif} — ${Number(e.montant||0).toLocaleString('fr-FR')} GNF\n`;
     });
     text += `\n`;
   }
@@ -1221,6 +1233,7 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
   let previewHtml = `
     <div style="margin-bottom:16px;">
       <div style="font-weight:700;color:var(--navy);">CHIFFRE D'AFFAIRES BRUT : ${totalCA.toLocaleString('fr-FR')} GNF</div>
+      <div style="font-size:.82rem;color:#8a8272;">(dont ${totalRecusDga.toLocaleString('fr-FR')} GNF reçus directement par le DGA)</div>
       <div>Dépenses des services : ${totalDepensesServices.toLocaleString('fr-FR')} GNF</div>
       <div>Dépenses générales (DGA) : ${totalDepensesDga.toLocaleString('fr-FR')} GNF</div>
       <div style="font-weight:700;">Dépenses totales : ${totalDepenses.toLocaleString('fr-FR')} GNF</div>
@@ -1260,6 +1273,18 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
     }
     previewHtml += `</div></div>`;
   });
+
+  previewHtml += `<div style="border-top:2px solid var(--line);padding:14px 0;">`;
+  previewHtml += `<div style="font-weight:700;color:var(--navy);margin-bottom:6px;">OPÉRATIONS GÉNÉRALES (DGA)</div>`;
+  if(dgaExp.length===0){
+    previewHtml += `<p class="empty" style="margin:4px 0 0;">Aucune opération générale sur la période.</p>`;
+  } else {
+    dgaExp.slice().sort((a,b)=>a.date.localeCompare(b.date)).forEach(e=>{
+      const isRecu = e.type==='recu';
+      previewHtml += `<div style="font-size:.85rem;margin-bottom:4px;color:${isRecu?'var(--ok)':'#8a7a45'};">${isRecu?'💰':'💸'} ${fmtDate(e.date)} : ${escapeHtml(e.motif)} — <strong>${Number(e.montant||0).toLocaleString('fr-FR')} GNF</strong></div>`;
+    });
+  }
+  previewHtml += `</div>`;
 
   return `
   <div class="card no-print">
@@ -1357,16 +1382,17 @@ function attachDgaEvents(){
   const dgaForm = document.getElementById('dgaExpenseForm');
   if(dgaForm) dgaForm.onsubmit = async (e)=>{
     e.preventDefault();
+    const type = document.getElementById('d_type').value;
     const motif = document.getElementById('d_motif').value.trim();
     const montant = document.getElementById('d_montant').value || 0;
     if(!motif || Number(montant)<=0){ showToast("⚠ Indiquez un motif et un montant."); return; }
-    const expense = { id: uid(), motif, montant: Number(montant), date: todayISO(), createdAt: Date.now() };
+    const expense = { id: uid(), type, motif, montant: Number(montant), date: todayISO(), createdAt: Date.now() };
     state.dgaExpenses.push(expense);
     const btn = dgaForm.querySelector('button[type=submit]');
     if(btn){ btn.disabled = true; btn.textContent = "Enregistrement..."; }
     try{
       await saveDgaExpense(expense);
-      showToast("Dépense enregistrée ✓");
+      showToast(type==='recu' ? "Encaissement enregistré ✓" : "Dépense enregistrée ✓");
     }catch(err){
       showToast("⚠ Échec de l'enregistrement — vérifiez votre connexion internet.");
     }
