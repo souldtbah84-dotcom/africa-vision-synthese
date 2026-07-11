@@ -188,6 +188,7 @@ const COL_CONFIG = "rapports_config";
 const COL_REPORTS = "rapports_reports";
 const COL_DGA_EXPENSES = "rapports_depenses_dga";
 const COL_DOCUMENTS = "rapports_documents";
+const COL_SITUATION = "rapports_situation";
 
 let lastSynthesisText = '';
 
@@ -197,6 +198,7 @@ let state = {
   reports: [],
   dgaExpenses: [],
   documents: [],
+  situations: [],
   filterDocType: 'all',
   dgaSignature: null,
   chefSignature: null,
@@ -363,6 +365,30 @@ async function saveDocument(doc){
     method:'PATCH',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify(toFirestoreDoc(doc))
+  });
+}
+
+async function loadSituations(){
+  try{
+    const res = await fetch(`${FIRESTORE_BASE}/${COL_SITUATION}?pageSize=100`);
+    const data = await res.json();
+    const docs = data.documents || [];
+    state.situations = docs.map(d=>{
+      const obj = fromFirestoreDoc(d);
+      const parts = d.name.split('/');
+      obj.id = parts[parts.length-1];
+      return obj;
+    });
+  }catch(e){
+    state.situations = [];
+  }
+}
+
+async function saveSituation(entry){
+  await fetch(`${FIRESTORE_BASE}/${COL_SITUATION}/${entry.id}`, {
+    method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(toFirestoreDoc(entry))
   });
 }
 
@@ -1011,6 +1037,7 @@ function renderDga(){
       <div class="tab ${state.dgaTab==='overview'?'active':''}" data-tab="overview">Vue d'ensemble</div>
       <div class="tab ${state.dgaTab==='reports'?'active':''}" data-tab="reports">Rapports</div>
       ${isPatron ? '' : `<div class="tab ${state.dgaTab==='depenses'?'active':''}" data-tab="depenses">Mes opérations</div>`}
+      <div class="tab ${state.dgaTab==='situation'?'active':''}" data-tab="situation">Situation</div>
       <div class="tab ${state.dgaTab==='documents'?'active':''}" data-tab="documents">Justificatifs</div>
       <div class="tab ${state.dgaTab==='synthese'?'active':''}" data-tab="synthese">Synthèse pour le Patron</div>
     </div>
@@ -1018,6 +1045,7 @@ function renderDga(){
     ${state.dgaTab==='overview' ? renderOverview(missingToday, list, totalDepensesDga, totalRecusDga, isPatron) : ''}
     ${state.dgaTab==='reports' ? renderReportsTab(list) : ''}
     ${state.dgaTab==='depenses' && !isPatron ? renderDgaExpensesTab(dgaExp) : ''}
+    ${state.dgaTab==='situation' ? renderSituationTab(isPatron) : ''}
     ${state.dgaTab==='documents' ? renderDocumentsTab(isPatron) : ''}
     ${state.dgaTab==='synthese' ? renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDepensesDga, totalRecusDga, totalDepenses, totalNet, totalClients, problemesCount, isPatron) : ''}
   </div>`;
@@ -1162,6 +1190,48 @@ function renderDgaExpensesTab(dgaExp){
             <span class="chip" style="font-weight:700;">${e.type==='recu'?'💰 Reçu':'💸 Dépense'} — ${Number(e.montant||0).toLocaleString('fr-FR')} GNF</span>
           </div>
           <div class="report-body">${escapeHtml(e.motif)}</div>
+        </div>
+      `).join('')
+    }
+  </div>`;
+}
+
+function renderSituationTab(isPatron){
+  const entries = state.situations.slice().sort((a,b)=> b.date.localeCompare(a.date) || (b.createdAt||0)-(a.createdAt||0));
+  return `
+  ${isPatron ? '' : `
+  <div class="card no-print">
+    <h2>Nouvelle note de situation</h2>
+    <p class="hint">Espace de rédaction libre pour le Patron — les chiffres écrits ici ne sont jamais additionnés dans les totaux de l'application.</p>
+    <form id="situationForm">
+      <label>Votre note</label>
+      <textarea id="s_texte" placeholder="Ex: Situation générale de la semaine, points à discuter avec le Patron, contexte sur telle décision..." style="min-height:160px;" required></textarea>
+      <button type="submit" class="btn btn-primary">Publier la note</button>
+    </form>
+  </div>`}
+
+  <div class="card no-print">
+    <div class="actions-row" style="margin-top:0;">
+      <button class="btn btn-secondary" id="printSituationBtn" type="button">🖨️ Imprimer / PDF</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding-bottom:14px;border-bottom:2px solid var(--gold);">
+      <img src="${LOGO_DATA_URI}" alt="Africa Vision" style="width:52px;height:52px;object-fit:contain;flex-shrink:0;">
+      <div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--navy);font-size:1.05rem;line-height:1.2;">AFRICA VISION MULTISERVICES</div>
+        <div style="font-size:.78rem;color:#8a8272;">Situation — Notes du DGA pour le Patron</div>
+      </div>
+    </div>
+    <h2>${isPatron ? 'Notes du DGA' : 'Historique de mes notes'} (${entries.length})</h2>
+    ${entries.length===0 ? '<p class="empty">Aucune note pour le moment.</p>' :
+      entries.map(s=>`
+        <div class="report-item">
+          <div class="report-top">
+            <span class="report-date">${fmtDate(s.date)}</span>
+          </div>
+          <div class="report-body">${escapeHtml(s.texte)}</div>
         </div>
       `).join('')
     }
@@ -1349,6 +1419,7 @@ function attachDgaEvents(){
     await loadDgaSignature();
     await loadAllChefSignatures();
     await loadDocuments();
+    await loadSituations();
     render();
     showToast("Données à jour ✓");
   };
@@ -1417,6 +1488,27 @@ function attachDgaEvents(){
   if(fdt) fdt.onchange = ()=>{ state.filterDocType = fdt.value; render(); };
   if(ffd) ffd.onchange = ()=>{ state.filterFrom = ffd.value || null; render(); };
   if(ftd) ftd.onchange = ()=>{ state.filterTo = ftd.value || null; render(); };
+
+  const situationForm = document.getElementById('situationForm');
+  if(situationForm) situationForm.onsubmit = async (e)=>{
+    e.preventDefault();
+    const texte = document.getElementById('s_texte').value.trim();
+    if(!texte){ showToast("⚠ Écrivez votre note avant de publier."); return; }
+    const entry = { id: uid(), texte, date: todayISO(), createdAt: Date.now() };
+    state.situations.push(entry);
+    const btn = situationForm.querySelector('button[type=submit]');
+    if(btn){ btn.disabled = true; btn.textContent = "Publication..."; }
+    try{
+      await saveSituation(entry);
+      showToast("Note publiée ✓");
+    }catch(err){
+      showToast("⚠ Échec de la publication — vérifiez votre connexion internet.");
+    }
+    render();
+  };
+
+  const printSituationBtn = document.getElementById('printSituationBtn');
+  if(printSituationBtn) printSituationBtn.onclick = ()=> window.print();
 
   setupSignaturePad();
   setupDocumentForm('dga');
@@ -1535,6 +1627,7 @@ function escapeHtml(str){
   await loadDgaExpenses();
   await loadDgaSignature();
   await loadDocuments();
+  await loadSituations();
   render();
 })();
 </script>
