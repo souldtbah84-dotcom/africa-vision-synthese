@@ -1148,6 +1148,10 @@ function renderDocumentsTab(isPatron){
     <div class="kpi" style="background:var(--teal);"><div class="num" style="color:#fff;">${totalRecus.toLocaleString('fr-FR')}</div><div class="lbl">Reçus clients (GNF)</div></div>
   </div>
 
+  <div class="card no-print" style="background:#fdfcf8;border-color:var(--gold);">
+    <p class="hint" style="margin:0;">ℹ️ Les justificatifs <strong>"Direction (Général)"</strong> sont automatiquement comptés dans vos totaux (Vue d'ensemble, Synthèse), comme "Mes opérations". Les justificatifs liés à un <strong>service</strong> (Cargo, Billetterie...) restent de simples preuves — leur montant est déjà compté dans le rapport quotidien du chef concerné, pour éviter de le compter deux fois.</p>
+  </div>
+
   ${isPatron ? '' : renderDocumentUploadForm()}
   ${renderDocumentsList(list, true, "Tous les justificatifs", !isPatron)}`;
 }
@@ -1157,10 +1161,18 @@ function renderDga(){
   if(isPatron && state.dgaTab==='depenses') state.dgaTab = 'overview';
   const list = filteredReports();
   const dgaExp = filteredDgaExpenses();
+  const docsForTotals = state.documents.filter(d=>{
+    if(d.service!=='dga') return false;
+    if(state.filterFrom && d.date < state.filterFrom) return false;
+    if(state.filterTo && d.date > state.filterTo) return false;
+    return true;
+  });
   const totalCAServices = list.reduce((s,r)=>s+Number(r.ca||0),0);
   const totalDepensesServices = list.reduce((s,r)=>s+Number(r.depenses||0),0);
-  const totalDepensesDga = dgaExp.filter(e=>e.type!=='recu').reduce((s,e)=>s+Number(e.montant||0),0);
-  const totalRecusDga = dgaExp.filter(e=>e.type==='recu').reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalDocFacturesDga = docsForTotals.filter(d=>d.type==='facture').reduce((s,d)=>s+Number(d.montant||0),0);
+  const totalDocRecusDga = docsForTotals.filter(d=>d.type==='recu').reduce((s,d)=>s+Number(d.montant||0),0);
+  const totalDepensesDga = dgaExp.filter(e=>e.type!=='recu').reduce((s,e)=>s+Number(e.montant||0),0) + totalDocFacturesDga;
+  const totalRecusDga = dgaExp.filter(e=>e.type==='recu').reduce((s,e)=>s+Number(e.montant||0),0) + totalDocRecusDga;
   const totalCA = totalCAServices + totalRecusDga;
   const totalDepenses = totalDepensesServices + totalDepensesDga;
   const totalNet = totalCA - totalDepenses;
