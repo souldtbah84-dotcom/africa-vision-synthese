@@ -344,6 +344,11 @@ async function saveDgaExpense(expense){
   });
 }
 
+async function deleteDgaExpense(id){
+  await fetch(`${FIRESTORE_BASE}/${COL_DGA_EXPENSES}/${id}`, { method:'DELETE' });
+  state.dgaExpenses = state.dgaExpenses.filter(e=>e.id!==id);
+}
+
 async function loadDocuments(){
   try{
     const res = await fetch(`${FIRESTORE_BASE}/${COL_DOCUMENTS}?pageSize=300`);
@@ -366,6 +371,11 @@ async function saveDocument(doc){
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify(toFirestoreDoc(doc))
   });
+}
+
+async function deleteDocumentById(id){
+  await fetch(`${FIRESTORE_BASE}/${COL_DOCUMENTS}/${id}`, { method:'DELETE' });
+  state.documents = state.documents.filter(d=>d.id!==id);
 }
 
 async function loadSituations(){
@@ -659,7 +669,7 @@ function renderChef(){
 
 function renderDocumentsCardChef(svc){
   const mine = state.documents.filter(d=>d.service===svc).sort((a,b)=>b.date.localeCompare(a.date));
-  return renderDocumentUploadForm() + renderDocumentsList(mine, false, "Mes justificatifs");
+  return renderDocumentUploadForm() + renderDocumentsList(mine, false, "Mes justificatifs", false);
 }
 
 function renderDocumentUploadForm(){
@@ -699,7 +709,7 @@ function renderDocumentUploadForm(){
   </div>`;
 }
 
-function renderDocumentsList(list, showServiceTag, title){
+function renderDocumentsList(list, showServiceTag, title, canDelete){
   return `
   <div class="card">
     <h2>${title} (${list.length})</h2>
@@ -715,6 +725,7 @@ function renderDocumentsList(list, showServiceTag, title){
             ${showServiceTag ? `<span class="service-tag ${getServiceInfo(d.service).tag}" style="margin-bottom:4px;display:inline-block;">${getServiceInfo(d.service).label}</span>` : ''}
             <div class="report-body" style="margin-bottom:4px;">${escapeHtml(d.description)}</div>
             <span class="chip">${Number(d.montant||0).toLocaleString('fr-FR')} GNF</span>
+            ${canDelete ? `<button class="btn-ghost no-print" data-del-doc="${d.id}" type="button" style="color:var(--danger);display:block;margin-top:4px;">🗑️ Supprimer</button>` : ''}
           </div>
         </div>
       `).join('')
@@ -850,6 +861,19 @@ function setupDocThumbClicks(){
     el.onclick = ()=>{
       const doc = state.documents.find(d=>d.id === el.dataset.docId);
       if(doc) showDocumentModal(doc);
+    };
+  });
+  document.querySelectorAll('[data-del-doc]').forEach(el=>{
+    el.onclick = async ()=>{
+      if(!confirm("Supprimer définitivement ce justificatif ?")) return;
+      const id = el.dataset.delDoc;
+      try{
+        await deleteDocumentById(id);
+        showToast("Justificatif supprimé ✓");
+      }catch(err){
+        showToast("⚠ Échec de la suppression.");
+      }
+      render();
     };
   });
 }
@@ -1002,7 +1026,7 @@ function renderDocumentsTab(isPatron){
   </div>
 
   ${isPatron ? '' : renderDocumentUploadForm()}
-  ${renderDocumentsList(list, true, "Tous les justificatifs")}`;
+  ${renderDocumentsList(list, true, "Tous les justificatifs", !isPatron)}`;
 }
 
 function renderDga(){
@@ -1058,7 +1082,19 @@ function renderOverview(missingToday, list, totalDepensesDga, totalRecusDga, isP
   const totalDepenses = totalDepensesServices + totalDepensesDga;
   const totalNet = totalCA - totalDepenses;
   const totalClients = list.reduce((s,r)=>s+Number(r.clients||0),0);
+
+  const activeFilterParts = [];
+  if(state.filterService !== 'all') activeFilterParts.push(`Service : <strong>${getServiceInfo(state.filterService).label}</strong>`);
+  if(state.filterFrom) activeFilterParts.push(`Depuis le <strong>${fmtDate(state.filterFrom)}</strong>`);
+  if(state.filterTo) activeFilterParts.push(`Jusqu'au <strong>${fmtDate(state.filterTo)}</strong>`);
+  const hasFilter = activeFilterParts.length > 0;
+
   return `
+  ${hasFilter ? `
+  <div class="card no-print" style="border-color:var(--danger);">
+    <p class="hint" style="color:var(--danger);margin:0 0 8px;">⚠ Filtre(s) actif(s) : ${activeFilterParts.join(' · ')}. Les chiffres ci-dessous ne couvrent pas forcément toute l'activité.</p>
+    <button class="btn btn-secondary" id="resetOverviewFilterBtn" type="button">Afficher toutes les données</button>
+  </div>` : ''}
   <div class="kpi-row">
     <div class="kpi"><div class="num">${totalCA.toLocaleString('fr-FR')}</div><div class="lbl">CA brut (GNF)</div></div>
     <div class="kpi"><div class="num">${totalRecusDga.toLocaleString('fr-FR')}</div><div class="lbl">Dont reçu par DGA (GNF)</div></div>
@@ -1207,6 +1243,7 @@ function renderDgaExpensesTab(dgaExp){
             <span class="chip" style="font-weight:700;">${e.type==='recu'?'💰 Reçu':'💸 Dépense'} — ${Number(e.montant||0).toLocaleString('fr-FR')} GNF</span>
           </div>
           <div class="report-body">${escapeHtml(e.motif)}</div>
+          <button class="btn-ghost no-print" data-del-op="${e.id}" type="button" style="color:var(--danger);margin-top:4px;">🗑️ Supprimer</button>
         </div>
       `).join('')
     }
@@ -1373,12 +1410,16 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
   }
   previewHtml += `</div>`;
 
-  const hasFilter = !!(state.filterFrom || state.filterTo || state.filterService!=='all');
+  const activeFilterParts = [];
+  if(state.filterService !== 'all') activeFilterParts.push(`Service : <strong>${getServiceInfo(state.filterService).label}</strong>`);
+  if(state.filterFrom) activeFilterParts.push(`Depuis le <strong>${fmtDate(state.filterFrom)}</strong>`);
+  if(state.filterTo) activeFilterParts.push(`Jusqu'au <strong>${fmtDate(state.filterTo)}</strong>`);
+  const hasFilter = activeFilterParts.length > 0;
 
   return `
   <div class="card no-print">
     <h2>Période de la synthèse</h2>
-    ${hasFilter ? `<p class="hint" style="color:var(--danger);">⚠ Un filtre est actif — la synthèse ne couvre pas forcément toute l'activité passée.</p>` : `<p class="hint">La synthèse couvre toute l'activité enregistrée, depuis le début.</p>`}
+    ${hasFilter ? `<p class="hint" style="color:var(--danger);">⚠ Filtre(s) actif(s) : ${activeFilterParts.join(' · ')}. La synthèse ne couvre pas forcément toute l'activité passée.</p>` : `<p class="hint">La synthèse couvre toute l'activité enregistrée, depuis le début.</p>`}
     <div class="grid2">
       <div>
         <label>Du</label>
@@ -1509,7 +1550,10 @@ function attachDgaEvents(){
   if(ffo) ffo.onchange = ()=>{ state.filterFrom = ffo.value || null; render(); };
   if(fto) fto.onchange = ()=>{ state.filterTo = fto.value || null; render(); };
   const resetOpsBtn = document.getElementById('resetOpsFilterBtn');
-  if(resetOpsBtn) resetOpsBtn.onclick = ()=>{ state.filterFrom = null; state.filterTo = null; render(); };
+  if(resetOpsBtn) resetOpsBtn.onclick = ()=>{ state.filterFrom = null; state.filterTo = null; state.filterService = 'all'; render(); };
+
+  const resetOverviewBtn = document.getElementById('resetOverviewFilterBtn');
+  if(resetOverviewBtn) resetOverviewBtn.onclick = ()=>{ state.filterFrom = null; state.filterTo = null; state.filterService = 'all'; render(); };
 
   const ffs = document.getElementById('filtFromSynth');
   const fts = document.getElementById('filtToSynth');
@@ -1557,6 +1601,20 @@ function attachDgaEvents(){
 
   const printSituationBtn = document.getElementById('printSituationBtn');
   if(printSituationBtn) printSituationBtn.onclick = ()=> window.print();
+
+  document.querySelectorAll('[data-del-op]').forEach(el=>{
+    el.onclick = async ()=>{
+      if(!confirm("Supprimer définitivement cette opération ?")) return;
+      const id = el.dataset.delOp;
+      try{
+        await deleteDgaExpense(id);
+        showToast("Opération supprimée ✓");
+      }catch(err){
+        showToast("⚠ Échec de la suppression.");
+      }
+      render();
+    };
+  });
 
   setupSignaturePad();
   setupDocumentForm('dga');
