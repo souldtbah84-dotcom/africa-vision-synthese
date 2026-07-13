@@ -1158,7 +1158,24 @@ function renderReportsTab(list){
 function renderDgaExpensesTab(dgaExp){
   const totalDep = dgaExp.filter(e=>e.type!=='recu').reduce((s,e)=>s+Number(e.montant||0),0);
   const totalRecu = dgaExp.filter(e=>e.type==='recu').reduce((s,e)=>s+Number(e.montant||0),0);
+  const hasFilter = !!(state.filterFrom || state.filterTo);
   return `
+  <div class="card no-print">
+    <h2>Période affichée</h2>
+    ${hasFilter ? `<p class="hint" style="color:var(--danger);">⚠ Un filtre de période est actif — certaines opérations anciennes peuvent être masquées.</p>` : `<p class="hint">Toutes vos opérations, depuis le début, sont affichées ci-dessous.</p>`}
+    <div class="grid2">
+      <div>
+        <label>Du</label>
+        <input type="date" id="filtFromOps" value="${state.filterFrom||''}">
+      </div>
+      <div>
+        <label>Au</label>
+        <input type="date" id="filtToOps" value="${state.filterTo||''}">
+      </div>
+    </div>
+    ${hasFilter ? `<button class="btn btn-secondary" id="resetOpsFilterBtn" type="button" style="margin-top:10px;">Afficher toutes mes opérations</button>` : ''}
+  </div>
+
   <div class="card">
     <h2>Nouvelle opération</h2>
     <p class="hint">Dépenses générales ou argent reçu directement d'un client, en tant que DGA (hors services).</p>
@@ -1356,10 +1373,27 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
   }
   previewHtml += `</div>`;
 
+  const hasFilter = !!(state.filterFrom || state.filterTo || state.filterService!=='all');
+
   return `
   <div class="card no-print">
+    <h2>Période de la synthèse</h2>
+    ${hasFilter ? `<p class="hint" style="color:var(--danger);">⚠ Un filtre est actif — la synthèse ne couvre pas forcément toute l'activité passée.</p>` : `<p class="hint">La synthèse couvre toute l'activité enregistrée, depuis le début.</p>`}
+    <div class="grid2">
+      <div>
+        <label>Du</label>
+        <input type="date" id="filtFromSynth" value="${state.filterFrom||''}">
+      </div>
+      <div>
+        <label>Au</label>
+        <input type="date" id="filtToSynth" value="${state.filterTo||''}">
+      </div>
+    </div>
+    ${hasFilter ? `<button class="btn btn-secondary" id="resetSynthFilterBtn" type="button" style="margin-top:10px;">Afficher toute la période</button>` : ''}
+  </div>
+  <div class="card no-print">
     <h2>Générer la synthèse</h2>
-    <p class="hint">Basée sur les filtres de l'onglet Rapports (période du ${fmtDate(from)} au ${fmtDate(to)}).</p>
+    <p class="hint">Période du ${fmtDate(from)} au ${fmtDate(to)}.</p>
     <div class="actions-row">
       <button class="btn btn-teal" id="copyBtn">📋 Copier (pour WhatsApp)</button>
       <button class="btn btn-secondary" id="printBtn">🖨️ Imprimer / PDF</button>
@@ -1469,6 +1503,20 @@ function attachDgaEvents(){
     }
     render();
   };
+
+  const ffo = document.getElementById('filtFromOps');
+  const fto = document.getElementById('filtToOps');
+  if(ffo) ffo.onchange = ()=>{ state.filterFrom = ffo.value || null; render(); };
+  if(fto) fto.onchange = ()=>{ state.filterTo = fto.value || null; render(); };
+  const resetOpsBtn = document.getElementById('resetOpsFilterBtn');
+  if(resetOpsBtn) resetOpsBtn.onclick = ()=>{ state.filterFrom = null; state.filterTo = null; render(); };
+
+  const ffs = document.getElementById('filtFromSynth');
+  const fts = document.getElementById('filtToSynth');
+  if(ffs) ffs.onchange = ()=>{ state.filterFrom = ffs.value || null; render(); };
+  if(fts) fts.onchange = ()=>{ state.filterTo = fts.value || null; render(); };
+  const resetSynthBtn = document.getElementById('resetSynthFilterBtn');
+  if(resetSynthBtn) resetSynthBtn.onclick = ()=>{ state.filterFrom = null; state.filterTo = null; state.filterService = 'all'; render(); };
 
   const copyBtn = document.getElementById('copyBtn');
   if(copyBtn) copyBtn.onclick = ()=>{
