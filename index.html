@@ -917,8 +917,9 @@ function showEditOperationModal(op){
       <h2 style="margin:0 0 12px;color:var(--navy);font-family:'Space Grotesk',sans-serif;font-size:1rem;">Modifier l'opération</h2>
       <label>Type d'opération</label>
       <select id="edit_op_type">
-        <option value="depense" ${op.type!=='recu'?'selected':''}>💸 Dépense effectuée</option>
-        <option value="recu" ${op.type==='recu'?'selected':''}>💰 Argent reçu d'un client</option>
+        <option value="depense" ${op.type==='depense'?'selected':''}>💸 Dépense effectuée</option>
+        <option value="recu" ${op.type==='recu'?'selected':''}>💰 Argent reçu d'un nouveau client</option>
+        <option value="depot" ${op.type==='depot'?'selected':''}>🔄 Dépôt remis par un chef de service</option>
       </select>
       <label>Motif</label>
       <input type="text" id="edit_op_motif" value="${escapeHtml(op.motif||'')}">
@@ -1149,7 +1150,7 @@ function renderDocumentsTab(isPatron){
   </div>
 
   <div class="card no-print" style="background:#fdfcf8;border-color:var(--gold);">
-    <p class="hint" style="margin:0;">ℹ️ Les justificatifs <strong>"Direction (Général)"</strong> sont automatiquement comptés dans vos totaux (Vue d'ensemble, Synthèse), comme "Mes opérations". Les justificatifs liés à un <strong>service</strong> (Cargo, Billetterie...) restent de simples preuves — leur montant est déjà compté dans le rapport quotidien du chef concerné, pour éviter de le compter deux fois.</p>
+    <p class="hint" style="margin:0;">ℹ️ Les justificatifs servent uniquement à <strong>prouver</strong> des dépenses ou encaissements déjà enregistrés ailleurs (rapport du chef ou "Mes opérations"). Leurs montants ne sont <strong>jamais additionnés</strong> dans la Vue d'ensemble ou la Synthèse, pour éviter de compter une même somme deux fois.</p>
   </div>
 
   ${isPatron ? '' : renderDocumentUploadForm()}
@@ -1161,18 +1162,11 @@ function renderDga(){
   if(isPatron && state.dgaTab==='depenses') state.dgaTab = 'overview';
   const list = filteredReports();
   const dgaExp = filteredDgaExpenses();
-  const docsForTotals = state.documents.filter(d=>{
-    if(d.service!=='dga') return false;
-    if(state.filterFrom && d.date < state.filterFrom) return false;
-    if(state.filterTo && d.date > state.filterTo) return false;
-    return true;
-  });
   const totalCAServices = list.reduce((s,r)=>s+Number(r.ca||0),0);
   const totalDepensesServices = list.reduce((s,r)=>s+Number(r.depenses||0),0);
-  const totalDocFacturesDga = docsForTotals.filter(d=>d.type==='facture').reduce((s,d)=>s+Number(d.montant||0),0);
-  const totalDocRecusDga = docsForTotals.filter(d=>d.type==='recu').reduce((s,d)=>s+Number(d.montant||0),0);
-  const totalDepensesDga = dgaExp.filter(e=>e.type!=='recu').reduce((s,e)=>s+Number(e.montant||0),0) + totalDocFacturesDga;
-  const totalRecusDga = dgaExp.filter(e=>e.type==='recu').reduce((s,e)=>s+Number(e.montant||0),0) + totalDocRecusDga;
+  const totalDepensesDga = dgaExp.filter(e=>e.type==='depense').reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalRecusDga = dgaExp.filter(e=>e.type==='recu').reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalDepotsDga = dgaExp.filter(e=>e.type==='depot').reduce((s,e)=>s+Number(e.montant||0),0);
   const totalCA = totalCAServices + totalRecusDga;
   const totalDepenses = totalDepensesServices + totalDepensesDga;
   const totalNet = totalCA - totalDepenses;
@@ -1327,8 +1321,9 @@ function renderReportsTab(list){
 }
 
 function renderDgaExpensesTab(dgaExp){
-  const totalDep = dgaExp.filter(e=>e.type!=='recu').reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalDep = dgaExp.filter(e=>e.type==='depense').reduce((s,e)=>s+Number(e.montant||0),0);
   const totalRecu = dgaExp.filter(e=>e.type==='recu').reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalDepot = dgaExp.filter(e=>e.type==='depot').reduce((s,e)=>s+Number(e.montant||0),0);
   const hasFilter = !!(state.filterFrom || state.filterTo);
   return `
   <div class="card no-print">
@@ -1349,16 +1344,17 @@ function renderDgaExpensesTab(dgaExp){
 
   <div class="card">
     <h2>Nouvelle opération</h2>
-    <p class="hint">Dépenses générales ou argent reçu directement d'un client, en tant que DGA (hors services).</p>
+    <p class="hint">Dépenses générales, argent reçu directement d'un nouveau client, ou dépôt qu'un chef de service vous remet (déjà compté dans son propre rapport).</p>
     <form id="dgaExpenseForm">
       <label>Type d'opération</label>
       <select id="d_type">
         <option value="depense">💸 Dépense effectuée</option>
-        <option value="recu">💰 Argent reçu d'un client</option>
+        <option value="recu">💰 Argent reçu d'un nouveau client (nouvelle recette)</option>
+        <option value="depot">🔄 Dépôt remis par un chef de service (transfert interne)</option>
       </select>
 
       <label>Motif</label>
-      <input type="text" id="d_motif" placeholder="Ex: Carburant véhicule direction / Paiement client Fatoumata..." required>
+      <input type="text" id="d_motif" placeholder="Ex: Carburant véhicule direction / Dépôt Chef Billetterie..." required>
 
       <label>Montant (GNF)</label>
       <input type="number" id="d_montant" min="0" placeholder="0" required>
@@ -1369,13 +1365,13 @@ function renderDgaExpensesTab(dgaExp){
 
   <div class="card">
     <h2>Historique de mes opérations (${dgaExp.length})</h2>
-    <p class="hint">Dépenses : <strong>${totalDep.toLocaleString('fr-FR')} GNF</strong> · Argent reçu : <strong>${totalRecu.toLocaleString('fr-FR')} GNF</strong></p>
+    <p class="hint">Dépenses : <strong>${totalDep.toLocaleString('fr-FR')} GNF</strong> · Nouvel argent reçu : <strong>${totalRecu.toLocaleString('fr-FR')} GNF</strong> · Dépôts internes (non comptés dans le CA) : <strong>${totalDepot.toLocaleString('fr-FR')} GNF</strong></p>
     ${dgaExp.length===0 ? '<p class="empty">Aucune opération enregistrée pour cette période.</p>' :
       dgaExp.map(e=>`
         <div class="report-item">
           <div class="report-top">
             <span class="report-date">${fmtDate(e.date)}</span>
-            <span class="chip" style="font-weight:700;">${e.type==='recu'?'💰 Reçu':'💸 Dépense'} — ${Number(e.montant||0).toLocaleString('fr-FR')} GNF</span>
+            <span class="chip" style="font-weight:700;">${e.type==='recu'?'💰 Reçu':(e.type==='depot'?'🔄 Dépôt interne':'💸 Dépense')} — ${Number(e.montant||0).toLocaleString('fr-FR')} GNF</span>
           </div>
           <div class="report-body">${escapeHtml(e.motif)}</div>
           <div style="display:flex;gap:14px;margin-top:4px;">
@@ -1479,7 +1475,7 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
     text += `Aucune opération générale sur la période.\n\n`;
   } else {
     dgaExp.slice().sort((a,b)=>a.date.localeCompare(b.date)).forEach(e=>{
-      const icone = e.type==='recu' ? '💰 Reçu' : '💸 Dépense';
+      const icone = e.type==='recu' ? '💰 Reçu' : (e.type==='depot' ? '🔄 Dépôt interne (non compté dans le CA)' : '💸 Dépense');
       text += `• ${fmtDate(e.date)} : [${icone}] ${e.motif} — ${Number(e.montant||0).toLocaleString('fr-FR')} GNF\n`;
     });
     text += `\n`;
@@ -1542,8 +1538,10 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
     previewHtml += `<p class="empty" style="margin:4px 0 0;">Aucune opération générale sur la période.</p>`;
   } else {
     dgaExp.slice().sort((a,b)=>a.date.localeCompare(b.date)).forEach(e=>{
-      const isRecu = e.type==='recu';
-      previewHtml += `<div style="font-size:.85rem;margin-bottom:4px;color:${isRecu?'var(--ok)':'#8a7a45'};">${isRecu?'💰':'💸'} ${fmtDate(e.date)} : ${escapeHtml(e.motif)} — <strong>${Number(e.montant||0).toLocaleString('fr-FR')} GNF</strong></div>`;
+      const icon = e.type==='recu' ? '💰' : (e.type==='depot' ? '🔄' : '💸');
+      const color = e.type==='recu' ? 'var(--ok)' : (e.type==='depot' ? 'var(--teal)' : '#8a7a45');
+      const suffix = e.type==='depot' ? ' <span style="font-style:italic;color:#8a8272;">(non compté dans le CA)</span>' : '';
+      previewHtml += `<div style="font-size:.85rem;margin-bottom:4px;color:${color};">${icon} ${fmtDate(e.date)} : ${escapeHtml(e.motif)} — <strong>${Number(e.montant||0).toLocaleString('fr-FR')} GNF</strong>${suffix}</div>`;
     });
   }
   previewHtml += `</div>`;
