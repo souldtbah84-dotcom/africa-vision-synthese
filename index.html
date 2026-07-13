@@ -725,7 +725,10 @@ function renderDocumentsList(list, showServiceTag, title, canDelete){
             ${showServiceTag ? `<span class="service-tag ${getServiceInfo(d.service).tag}" style="margin-bottom:4px;display:inline-block;">${getServiceInfo(d.service).label}</span>` : ''}
             <div class="report-body" style="margin-bottom:4px;">${escapeHtml(d.description)}</div>
             <span class="chip">${Number(d.montant||0).toLocaleString('fr-FR')} GNF</span>
-            ${canDelete ? `<button class="btn-ghost no-print" data-del-doc="${d.id}" type="button" style="color:var(--danger);display:block;margin-top:4px;">🗑️ Supprimer</button>` : ''}
+            ${canDelete ? `<div style="display:flex;gap:14px;margin-top:4px;">
+              <button class="btn-ghost no-print" data-edit-doc="${d.id}" type="button">✏️ Modifier</button>
+              <button class="btn-ghost no-print" data-del-doc="${d.id}" type="button" style="color:var(--danger);">🗑️ Supprimer</button>
+            </div>` : ''}
           </div>
         </div>
       `).join('')
@@ -869,11 +872,18 @@ function setupDocThumbClicks(){
       const id = el.dataset.delDoc;
       try{
         await deleteDocumentById(id);
+        await loadDocuments();
         showToast("Justificatif supprimé ✓");
       }catch(err){
         showToast("⚠ Échec de la suppression.");
       }
       render();
+    };
+  });
+  document.querySelectorAll('[data-edit-doc]').forEach(el=>{
+    el.onclick = ()=>{
+      const doc = state.documents.find(d=>d.id === el.dataset.editDoc);
+      if(doc) showEditDocumentModal(doc);
     };
   });
 }
@@ -897,6 +907,119 @@ function showDocumentModal(doc){
   document.body.appendChild(box);
   box.querySelector('#closeDocModal').onclick = ()=> document.body.removeChild(box);
   box.onclick = (e)=>{ if(e.target===box) document.body.removeChild(box); };
+}
+
+function showEditOperationModal(op){
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;';
+  box.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:20px;max-width:420px;width:100%;max-height:90vh;overflow:auto;">
+      <h2 style="margin:0 0 12px;color:var(--navy);font-family:'Space Grotesk',sans-serif;font-size:1rem;">Modifier l'opération</h2>
+      <label>Type d'opération</label>
+      <select id="edit_op_type">
+        <option value="depense" ${op.type!=='recu'?'selected':''}>💸 Dépense effectuée</option>
+        <option value="recu" ${op.type==='recu'?'selected':''}>💰 Argent reçu d'un client</option>
+      </select>
+      <label>Motif</label>
+      <input type="text" id="edit_op_motif" value="${escapeHtml(op.motif||'')}">
+      <label>Montant (GNF)</label>
+      <input type="number" id="edit_op_montant" min="0" value="${op.montant||0}">
+      <label>Date</label>
+      <input type="date" id="edit_op_date" value="${op.date||todayISO()}">
+      <div class="actions-row">
+        <button class="btn btn-secondary" id="cancelEditOp" type="button">Annuler</button>
+        <button class="btn btn-primary" id="saveEditOp" type="button">Enregistrer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(box);
+  box.onclick = (e)=>{ if(e.target===box) document.body.removeChild(box); };
+  box.querySelector('#cancelEditOp').onclick = ()=> document.body.removeChild(box);
+  box.querySelector('#saveEditOp').onclick = async ()=>{
+    const motif = document.getElementById('edit_op_motif').value.trim();
+    const montant = document.getElementById('edit_op_montant').value || 0;
+    if(!motif || Number(montant)<=0){ showToast("⚠ Indiquez un motif et un montant."); return; }
+    const updated = {
+      ...op,
+      type: document.getElementById('edit_op_type').value,
+      motif,
+      montant: Number(montant),
+      date: document.getElementById('edit_op_date').value || op.date
+    };
+    const idx = state.dgaExpenses.findIndex(x=>x.id===op.id);
+    if(idx>=0) state.dgaExpenses[idx] = updated;
+    try{
+      await saveDgaExpense(updated);
+      await loadDgaExpenses();
+      showToast("Opération modifiée ✓");
+    }catch(err){
+      showToast("⚠ Échec de la modification.");
+    }
+    document.body.removeChild(box);
+    render();
+  };
+}
+
+function showEditDocumentModal(doc){
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;';
+  box.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:20px;max-width:420px;width:100%;max-height:90vh;overflow:auto;">
+      <h2 style="margin:0 0 12px;color:var(--navy);font-family:'Space Grotesk',sans-serif;font-size:1rem;">Modifier le justificatif</h2>
+      <img src="${doc.image}" style="max-width:160px;border-radius:8px;border:1.5px solid var(--line);display:block;margin-bottom:10px;">
+      <label>Remplacer la photo (optionnel)</label>
+      <input type="file" id="edit_doc_photo" accept="image/*" capture="environment">
+      <label>Type de document</label>
+      <select id="edit_doc_type">
+        <option value="facture" ${doc.type!=='recu'?'selected':''}>Facture payée (dépense)</option>
+        <option value="recu" ${doc.type==='recu'?'selected':''}>Reçu client (encaissement)</option>
+      </select>
+      <label>Montant (GNF)</label>
+      <input type="number" id="edit_doc_montant" min="0" value="${doc.montant||0}">
+      <label>Description</label>
+      <input type="text" id="edit_doc_description" value="${escapeHtml(doc.description||'')}">
+      <label>Date</label>
+      <input type="date" id="edit_doc_date" value="${doc.date||todayISO()}">
+      <div class="actions-row">
+        <button class="btn btn-secondary" id="cancelEditDoc" type="button">Annuler</button>
+        <button class="btn btn-primary" id="saveEditDoc" type="button">Enregistrer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(box);
+  box.onclick = (e)=>{ if(e.target===box) document.body.removeChild(box); };
+  box.querySelector('#cancelEditDoc').onclick = ()=> document.body.removeChild(box);
+
+  let newImage = null;
+  document.getElementById('edit_doc_photo').onchange = async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    try{ newImage = await compressImageFile(file); showToast("Nouvelle photo prête — enregistrez pour valider."); }
+    catch(err){ showToast("⚠ Impossible de lire cette image."); }
+  };
+
+  box.querySelector('#saveEditDoc').onclick = async ()=>{
+    const description = document.getElementById('edit_doc_description').value.trim();
+    const montant = document.getElementById('edit_doc_montant').value || 0;
+    if(!description || Number(montant)<=0){ showToast("⚠ Renseignez le montant et la description."); return; }
+    const updated = {
+      ...doc,
+      type: document.getElementById('edit_doc_type').value,
+      montant: Number(montant),
+      description,
+      date: document.getElementById('edit_doc_date').value || doc.date,
+      image: newImage || doc.image
+    };
+    const idx = state.documents.findIndex(x=>x.id===doc.id);
+    if(idx>=0) state.documents[idx] = updated;
+    try{
+      await saveDocument(updated);
+      await loadDocuments();
+      showToast("Justificatif modifié ✓");
+    }catch(err){
+      showToast("⚠ Échec de la modification.");
+    }
+    document.body.removeChild(box);
+    render();
+  };
 }
 
 function setupChefSignaturePad(){
@@ -1243,7 +1366,10 @@ function renderDgaExpensesTab(dgaExp){
             <span class="chip" style="font-weight:700;">${e.type==='recu'?'💰 Reçu':'💸 Dépense'} — ${Number(e.montant||0).toLocaleString('fr-FR')} GNF</span>
           </div>
           <div class="report-body">${escapeHtml(e.motif)}</div>
-          <button class="btn-ghost no-print" data-del-op="${e.id}" type="button" style="color:var(--danger);margin-top:4px;">🗑️ Supprimer</button>
+          <div style="display:flex;gap:14px;margin-top:4px;">
+            <button class="btn-ghost no-print" data-edit-op="${e.id}" type="button">✏️ Modifier</button>
+            <button class="btn-ghost no-print" data-del-op="${e.id}" type="button" style="color:var(--danger);">🗑️ Supprimer</button>
+          </div>
         </div>
       `).join('')
     }
@@ -1608,11 +1734,18 @@ function attachDgaEvents(){
       const id = el.dataset.delOp;
       try{
         await deleteDgaExpense(id);
+        await loadDgaExpenses();
         showToast("Opération supprimée ✓");
       }catch(err){
         showToast("⚠ Échec de la suppression.");
       }
       render();
+    };
+  });
+  document.querySelectorAll('[data-edit-op]').forEach(el=>{
+    el.onclick = ()=>{
+      const op = state.dgaExpenses.find(x=>x.id === el.dataset.editOp);
+      if(op) showEditOperationModal(op);
     };
   });
 
