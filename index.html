@@ -917,9 +917,9 @@ function showEditOperationModal(op){
       <h2 style="margin:0 0 12px;color:var(--navy);font-family:'Space Grotesk',sans-serif;font-size:1rem;">Modifier l'opération</h2>
       <label>Type d'opération</label>
       <select id="edit_op_type">
-        <option value="depense" ${op.type==='depense'?'selected':''}>💸 Dépense effectuée</option>
-        <option value="recu" ${op.type==='recu'?'selected':''}>💰 Argent reçu d'un nouveau client</option>
-        <option value="depot" ${op.type==='depot'?'selected':''}>🔄 Dépôt remis par un chef de service</option>
+        <option value="depense" ${getOpType(op)==='depense'?'selected':''}>💸 Dépense effectuée</option>
+        <option value="recu" ${getOpType(op)==='recu'?'selected':''}>💰 Argent reçu d'un nouveau client</option>
+        <option value="depot" ${getOpType(op)==='depot'?'selected':''}>🔄 Dépôt remis par un chef de service</option>
       </select>
       <label>Motif</label>
       <input type="text" id="edit_op_motif" value="${escapeHtml(op.motif||'')}">
@@ -1076,6 +1076,11 @@ function setupChefSignaturePad(){
 
 
 /* ================= DGA VIEW ================= */
+function getOpType(e){
+  // Compatibilité : les opérations créées avant l'ajout des types étaient des dépenses par défaut
+  return e.type || 'depense';
+}
+
 function getServiceInfo(key){
   if(key==='dga') return { label:"Direction (Général)", tag:"tag-cargo-reception" };
   return SERVICES[key] || { label: key || "Service inconnu", tag:"" };
@@ -1164,9 +1169,9 @@ function renderDga(){
   const dgaExp = filteredDgaExpenses();
   const totalCAServices = list.reduce((s,r)=>s+Number(r.ca||0),0);
   const totalDepensesServices = list.reduce((s,r)=>s+Number(r.depenses||0),0);
-  const totalDepensesDga = dgaExp.filter(e=>e.type==='depense').reduce((s,e)=>s+Number(e.montant||0),0);
-  const totalRecusDga = dgaExp.filter(e=>e.type==='recu').reduce((s,e)=>s+Number(e.montant||0),0);
-  const totalDepotsDga = dgaExp.filter(e=>e.type==='depot').reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalDepensesDga = dgaExp.filter(e=>getOpType(e)==='depense').reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalRecusDga = dgaExp.filter(e=>getOpType(e)==='recu').reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalDepotsDga = dgaExp.filter(e=>getOpType(e)==='depot').reduce((s,e)=>s+Number(e.montant||0),0);
   const totalCA = totalCAServices + totalRecusDga;
   const totalDepenses = totalDepensesServices + totalDepensesDga;
   const totalNet = totalCA - totalDepenses;
@@ -1321,9 +1326,9 @@ function renderReportsTab(list){
 }
 
 function renderDgaExpensesTab(dgaExp){
-  const totalDep = dgaExp.filter(e=>e.type==='depense').reduce((s,e)=>s+Number(e.montant||0),0);
-  const totalRecu = dgaExp.filter(e=>e.type==='recu').reduce((s,e)=>s+Number(e.montant||0),0);
-  const totalDepot = dgaExp.filter(e=>e.type==='depot').reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalDep = dgaExp.filter(e=>getOpType(e)==='depense').reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalRecu = dgaExp.filter(e=>getOpType(e)==='recu').reduce((s,e)=>s+Number(e.montant||0),0);
+  const totalDepot = dgaExp.filter(e=>getOpType(e)==='depot').reduce((s,e)=>s+Number(e.montant||0),0);
   const hasFilter = !!(state.filterFrom || state.filterTo);
   return `
   <div class="card no-print">
@@ -1371,7 +1376,7 @@ function renderDgaExpensesTab(dgaExp){
         <div class="report-item">
           <div class="report-top">
             <span class="report-date">${fmtDate(e.date)}</span>
-            <span class="chip" style="font-weight:700;">${e.type==='recu'?'💰 Reçu':(e.type==='depot'?'🔄 Dépôt interne':'💸 Dépense')} — ${Number(e.montant||0).toLocaleString('fr-FR')} GNF</span>
+            <span class="chip" style="font-weight:700;">${getOpType(e)==='recu'?'💰 Reçu':(getOpType(e)==='depot'?'🔄 Dépôt interne':'💸 Dépense')} — ${Number(e.montant||0).toLocaleString('fr-FR')} GNF</span>
           </div>
           <div class="report-body">${escapeHtml(e.motif)}</div>
           <div style="display:flex;gap:14px;margin-top:4px;">
@@ -1475,7 +1480,7 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
     text += `Aucune opération générale sur la période.\n\n`;
   } else {
     dgaExp.slice().sort((a,b)=>a.date.localeCompare(b.date)).forEach(e=>{
-      const icone = e.type==='recu' ? '💰 Reçu' : (e.type==='depot' ? '🔄 Dépôt interne (non compté dans le CA)' : '💸 Dépense');
+      const icone = getOpType(e)==='recu' ? '💰 Reçu' : (getOpType(e)==='depot' ? '🔄 Dépôt interne (non compté dans le CA)' : '💸 Dépense');
       text += `• ${fmtDate(e.date)} : [${icone}] ${e.motif} — ${Number(e.montant||0).toLocaleString('fr-FR')} GNF\n`;
     });
     text += `\n`;
@@ -1538,9 +1543,9 @@ function renderSyntheseTab(list, dgaExp, totalCA, totalDepensesServices, totalDe
     previewHtml += `<p class="empty" style="margin:4px 0 0;">Aucune opération générale sur la période.</p>`;
   } else {
     dgaExp.slice().sort((a,b)=>a.date.localeCompare(b.date)).forEach(e=>{
-      const icon = e.type==='recu' ? '💰' : (e.type==='depot' ? '🔄' : '💸');
-      const color = e.type==='recu' ? 'var(--ok)' : (e.type==='depot' ? 'var(--teal)' : '#8a7a45');
-      const suffix = e.type==='depot' ? ' <span style="font-style:italic;color:#8a8272;">(non compté dans le CA)</span>' : '';
+      const icon = getOpType(e)==='recu' ? '💰' : (getOpType(e)==='depot' ? '🔄' : '💸');
+      const color = getOpType(e)==='recu' ? 'var(--ok)' : (getOpType(e)==='depot' ? 'var(--teal)' : '#8a7a45');
+      const suffix = getOpType(e)==='depot' ? ' <span style="font-style:italic;color:#8a8272;">(non compté dans le CA)</span>' : '';
       previewHtml += `<div style="font-size:.85rem;margin-bottom:4px;color:${color};">${icon} ${fmtDate(e.date)} : ${escapeHtml(e.motif)} — <strong>${Number(e.montant||0).toLocaleString('fr-FR')} GNF</strong>${suffix}</div>`;
     });
   }
