@@ -1200,7 +1200,7 @@ function renderDga(){
       <div class="tab ${state.dgaTab==='synthese'?'active':''}" data-tab="synthese">Synthèse pour le Patron</div>
     </div>
 
-    ${state.dgaTab==='overview' ? renderOverview(missingToday, list, totalDepensesDga, totalRecusDga, isPatron) : ''}
+    ${state.dgaTab==='overview' ? renderOverview(missingToday, list, totalDepensesDga, totalRecusDga, totalDepotsDga, dgaExp, isPatron) : ''}
     ${state.dgaTab==='reports' ? renderReportsTab(list) : ''}
     ${state.dgaTab==='depenses' && !isPatron ? renderDgaExpensesTab(dgaExp) : ''}
     ${state.dgaTab==='situation' ? renderSituationTab(isPatron) : ''}
@@ -1209,7 +1209,7 @@ function renderDga(){
   </div>`;
 }
 
-function renderOverview(missingToday, list, totalDepensesDga, totalRecusDga, isPatron){
+function renderOverview(missingToday, list, totalDepensesDga, totalRecusDga, totalDepotsDga, dgaExp, isPatron){
   const totalCAServices = list.reduce((s,r)=>s+Number(r.ca||0),0);
   const totalCA = totalCAServices + totalRecusDga;
   const totalDepensesServices = list.reduce((s,r)=>s+Number(r.depenses||0),0);
@@ -1222,6 +1222,10 @@ function renderOverview(missingToday, list, totalDepensesDga, totalRecusDga, isP
   if(state.filterFrom) activeFilterParts.push(`Depuis le <strong>${fmtDate(state.filterFrom)}</strong>`);
   if(state.filterTo) activeFilterParts.push(`Jusqu'au <strong>${fmtDate(state.filterTo)}</strong>`);
   const hasFilter = activeFilterParts.length > 0;
+
+  const nbDepense = dgaExp.filter(e=>getOpType(e)==='depense').length;
+  const nbRecu = dgaExp.filter(e=>getOpType(e)==='recu').length;
+  const nbDepot = dgaExp.filter(e=>getOpType(e)==='depot').length;
 
   return `
   ${hasFilter ? `
@@ -1249,6 +1253,34 @@ function renderOverview(missingToday, list, totalDepensesDga, totalRecusDga, isP
         <span class="stamp ${done?'':'pending'}">${done?'✓ reçu':'⏳ en attente'}</span>
       </div>`;
     }).join('')}
+  </div>
+
+  <div class="card no-print" style="border-color:var(--gold);">
+    <h2>🔍 Détail du calcul (vérification)</h2>
+    <p class="hint">Décomposition ligne par ligne — à comparer avec votre propre comptabilité pour repérer immédiatement toute anomalie.</p>
+    <div style="font-size:.88rem;line-height:1.9;color:var(--ink);">
+      <div style="font-weight:700;color:var(--navy);margin-top:6px;">CA BRUT = ${totalCA.toLocaleString('fr-FR')} GNF</div>
+      <div style="padding-left:14px;">• CA des services (rapports) : <strong>${totalCAServices.toLocaleString('fr-FR')}</strong> GNF</div>
+      ${Object.keys(SERVICES).map(k=>{
+        const svcCA = list.filter(r=>r.service===k).reduce((s,r)=>s+Number(r.ca||0),0);
+        return `<div style="padding-left:28px;font-size:.82rem;color:#8a8272;">— ${SERVICES[k].label} : ${svcCA.toLocaleString('fr-FR')} GNF</div>`;
+      }).join('')}
+      <div style="padding-left:14px;">• Reçu directement par le DGA (${nbRecu} opération${nbRecu>1?'s':''} "Reçu") : <strong>${totalRecusDga.toLocaleString('fr-FR')}</strong> GNF</div>
+
+      <div style="font-weight:700;color:var(--navy);margin-top:10px;">DÉPENSES TOTALES = ${totalDepenses.toLocaleString('fr-FR')} GNF</div>
+      <div style="padding-left:14px;">• Dépenses des services (rapports) : <strong>${totalDepensesServices.toLocaleString('fr-FR')}</strong> GNF</div>
+      ${Object.keys(SERVICES).map(k=>{
+        const svcDep = list.filter(r=>r.service===k).reduce((s,r)=>s+Number(r.depenses||0),0);
+        return `<div style="padding-left:28px;font-size:.82rem;color:#8a8272;">— ${SERVICES[k].label} : ${svcDep.toLocaleString('fr-FR')} GNF</div>`;
+      }).join('')}
+      <div style="padding-left:14px;">• Dépenses du DGA (${nbDepense} opération${nbDepense>1?'s':''} "Dépense") : <strong>${totalDepensesDga.toLocaleString('fr-FR')}</strong> GNF</div>
+
+      <div style="font-weight:700;color:var(--teal);margin-top:10px;">CA NET = ${totalCA.toLocaleString('fr-FR')} − ${totalDepenses.toLocaleString('fr-FR')} = ${totalNet.toLocaleString('fr-FR')} GNF</div>
+
+      <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);color:#8a8272;">
+        🔄 Dépôts internes reçus des services (${nbDepot} opération${nbDepot>1?'s':''}) — <strong>non comptés</strong> dans le CA ci-dessus, car déjà inclus dans le CA des services : ${totalDepotsDga.toLocaleString('fr-FR')} GNF
+      </div>
+    </div>
   </div>
 
   <div class="card">
